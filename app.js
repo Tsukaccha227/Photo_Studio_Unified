@@ -99,7 +99,10 @@
       blurAmount: 35,
       blurBrightness: 100,
       cornerRadius: 0,
-      shadowStrength: 0
+      shadowStrength: 0,
+      shadowLightDir: 'top',
+      shadowSoftness: 55,
+      shadowDarkness: 68
     },
 
     crop: {
@@ -625,22 +628,332 @@
     ctx.closePath();
   }
 
+  // --- Physically-Based 3D Studio Shadow Engine (Fast Multi-Layer Preview + Cycles-Style Export) ---
+  const LIGHT_DIR_OFFSETS = {
+    top:   { x:  0.00, y: -0.58 },
+    left:  { x: -0.52, y: -0.46 },
+    right: { x:  0.52, y: -0.46 },
+    front: { x:  0.00, y: -0.08 }
+  };
+
+  function linearToSrgb255(c) {
+    const clamped = c <= 0 ? 0 : (c >= 1 ? 1 : c);
+    const s = clamped <= 0.0031308
+      ? clamped * 12.92
+      : 1.055 * Math.pow(clamped, 1 / 2.4) - 0.055;
+    return s * 255;
+  }
+
+  function drawPreviewLayeredShadow(ctx, rect, radiusPx, opts) {
+    const elevT = Math.max(0, Math.min(1, opts.elevation / 100));
+    if (elevT <= 0) return;
+
+    const minSide = Math.min(rect.w, rect.h);
+    const dir = LIGHT_DIR_OFFSETS[opts.lightDir] || LIGHT_DIR_OFFSETS.top;
+    const softT = Math.max(0, Math.min(1, (opts.softness ?? 55) / 100));
+    const darkT = Math.max(0, Math.min(1, (opts.darkness ?? 68) / 100));
+
+    // Directional cast vectors (opposite to light direction)
+    const baseShift = minSide * (0.008 + elevT * 0.036);
+    const dx = -dir.x * baseShift;
+    const dy = -dir.y * baseShift;
+    const softScale = 0.55 + softT * 1.15;
+
+    // 4 physically inspired layers composited in multiply mode (fast 60fps preview)
+    const layers = [
+      // 1. Tight contact AO hugging the 3D back slab
+      { ox: dx * 0.14, oy: dy * 0.14, blur: minSide * (0.004 + elevT * 0.006), alpha: 0.24 * darkT },
+      // 2. Near umbra shadow
+      { ox: dx * 0.52, oy: dy * 0.52, blur: minSide * (0.010 + elevT * 0.020) * softScale, alpha: 0.22 * darkT },
+      // 3. Mid key softbox penumbra
+      { ox: dx * 0.96, oy: dy * 0.96, blur: minSide * (0.018 + elevT * 0.042) * softScale, alpha: 0.18 * darkT },
+      // 4. Wide velvety ambient spill
+      { ox: dx * 1.38, oy: dy * 1.38, blur: minSide * (0.032 + elevT * 0.072) * softScale, alpha: 0.12 * darkT }
+    ];
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    for (let i = 0; i < layers.length; i++) {
+      const L = layers[i];
+      ctx.save();
+      // Subtle cool studio shadow tint instead of muddy flat black
+      ctx.shadowColor = `rgba(18, 22, 30, ${L.alpha.toFixed(3)})`;
+      ctx.shadowBlur = Math.max(1, L.blur);
+      ctx.shadowOffsetX = L.ox;
+      ctx.shadowOffsetY = L.oy;
+      drawRoundedRectPath(ctx, rect.x, rect.y, rect.w, rect.h, radiusPx);
+      ctx.fillStyle = '#000000';
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * True 3D Physically-Based Studio Shadow Renderer for Export (Blender Cycles Style)
+   * - Models a 3D rectangular slab of identical shape mounted behind the photo (z = h_back .. h_front)
+   * - Integrates 72 Gaussian-distributed Vogel samples over an overhead Studio Softbox Area Light
+   * - Integrates 48 Cosine-weighted Hemisphere Ambient Occlusion (AO) rays
+   * - Evaluates lighting in Linear RGB -> sRGB with sub-LSB dithering to prevent 8-bit banding
+   * - Runs in non-blocking async chunks with bounding-box & photo-interior culling
+   */
+  function renderPhysical3DShadowAsync(totalW, totalH, rect, radiusPx, opts, onProgress) {
+    return new Promise((resolve) => {
+      const SHADOW_MAX_SIDE = 960;
+      const longSide = Math.max(totalW, totalH);
+      const scale = longSide > SHADOW_MAX_SIDE ? (SHADOW_MAX_SIDE / longSide) : 1;
+
+      const sw = Math.max(16, Math.round(totalW * scale));
+      const sh = Math.max(16, Math.round(totalH * scale));
+      const rx = rect.x * scale;
+      const ry = rect.y * scale;
+      const rw = rect.w * scale;
+      const rh = rect.h * scale;
+      const rr = Math.min(radiusPx * scale, rw * 0.5, rh * 0.5);
+      const cx = rx + rw * 0.5;
+      const cy = ry + rh * 0.5;
+      const hw = rw * 0.5;
+      const hh = rh * 0.5;
+      const minSide = Math.min(rw, rh);
+      const bxInner = hw - rr;
+      const byInner = hh - rr;
+
+      const elevT = Math.max(0, Math.min(1, opts.elevation / 100));
+      const softT = Math.max(0, Math.min(1, (opts.softness ?? 55) / 100));
+      const darkT = Math.max(0, Math.min(1, (opts.darkness ?? 68) / 100));
+      const dir = LIGHT_DIR_OFFSETS[opts.lightDir] || LIGHT_DIR_OFFSETS.top;
+
+      // 3D Geometry: physical slab floating behind the photo
+      const hBack = (0.008 + elevT * 0.056) * minSide;
+      const slabThick = (0.014 + elevT * 0.024) * minSide;
+      const hMid = hBack + slabThick * 0.5;
+      const hFront = hBack + slabThick;
+
+      // Studio Softbox Area Light
+      const zLight = 1.55 * minSide;
+      const Lx = cx + dir.x * minSide;
+      const Ly = cy + dir.y * minSide;
+      const sigmaLight = (0.14 + softT * 0.44) * minSide;
+
+      // Precompute 72 Gaussian-distributed Vogel samples for Key Softbox (no hard outer penumbra edge)
+      const N_KEY = 72;
+      const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+      const keyQx = new Float32Array(N_KEY);
+      const keyQy = new Float32Array(N_KEY);
+      let maxKeyRad = 0;
+      for (let i = 0; i < N_KEY; i++) {
+        const u = ((i + 0.5) / N_KEY) * 0.968;
+        const rad = sigmaLight * Math.sqrt(-2 * Math.log(1 - u));
+        if (rad > maxKeyRad) maxKeyRad = rad;
+        const theta = i * goldenAngle;
+        keyQx[i] = Lx + rad * Math.cos(theta);
+        keyQy[i] = Ly + rad * Math.sin(theta);
+      }
+
+      const tBack = hBack / zLight;
+      const tMid = hMid / zLight;
+      const tFront = hFront / zLight;
+      const invTBack = 1 - tBack;
+      const invTMid = 1 - tMid;
+      const invTFront = 1 - tFront;
+
+      // Precompute 48 Cosine-weighted Hemisphere AO ray slopes (tan(theta)*cos/sin)
+      const N_AO = 48;
+      const aoDxBack = new Float32Array(N_AO);
+      const aoDyBack = new Float32Array(N_AO);
+      const aoDxFront = new Float32Array(N_AO);
+      const aoDyFront = new Float32Array(N_AO);
+      let maxAoReach = 0;
+      for (let i = 0; i < N_AO; i++) {
+        const u = (i + 0.5) / N_AO;
+        const sinT = Math.sqrt(u * 0.94);
+        const cosT = Math.sqrt(1 - sinT * sinT);
+        const tanT = sinT / cosT;
+        const phi = i * goldenAngle + 0.37;
+        const tx = tanT * Math.cos(phi);
+        const ty = tanT * Math.sin(phi);
+        aoDxBack[i] = hBack * tx;
+        aoDyBack[i] = hBack * ty;
+        aoDxFront[i] = hFront * tx;
+        aoDyFront[i] = hFront * ty;
+        const reach = hFront * tanT;
+        if (reach > maxAoReach) maxAoReach = reach;
+      }
+
+      // Crevice grounding parameters
+      const cShiftX = -dir.x * hBack * 0.36;
+      const cShiftY = -dir.y * hBack * 0.36;
+      const invCreviceW = 1 / Math.max(1.2, (0.0028 + 0.0060 * elevT) * minSide);
+      const creviceStrength = 0.24 + 0.14 * elevT;
+
+      // Compute conservative active bounding box (skip far-away pure white pixels)
+      const keyReachX = (tFront * (Math.abs(dir.x) * minSide + maxKeyRad)) / Math.max(0.1, invTFront);
+      const keyReachY = (tFront * (Math.abs(dir.y) * minSide + maxKeyRad)) / Math.max(0.1, invTFront);
+      const reachX = Math.max(keyReachX, maxAoReach) + 6;
+      const reachY = Math.max(keyReachY, maxAoReach) + 6;
+
+      const minY = Math.max(0, Math.floor(ry - reachY));
+      const maxY = Math.min(sh, Math.ceil(ry + rh + reachY));
+      const minX = Math.max(0, Math.floor(rx - reachX));
+      const maxX = Math.min(sw, Math.ceil(rx + rw + reachX));
+
+      // Strict opaque photo interior box (safe to skip because the photo is drawn over it)
+      const innerLeft = rx + Math.max(2, rr + 2);
+      const innerRight = rx + rw - Math.max(2, rr + 2);
+      const innerTop = ry + Math.max(2, rr + 2);
+      const innerBottom = ry + rh - Math.max(2, rr + 2);
+
+      const shadowCanvas = document.createElement('canvas');
+      shadowCanvas.width = sw;
+      shadowCanvas.height = sh;
+      const sctx = shadowCanvas.getContext('2d');
+      const imgData = sctx.createImageData(sw, sh);
+      const out = imgData.data;
+      // Fill entire multiply map with pure white (1.0 = no attenuation)
+      out.fill(255);
+
+      const invNKey = 1 / N_KEY;
+      const invNAo = 1 / N_AO;
+
+      // Fast inline rounded-box SDF check (soft antialiased hit in [0..1])
+      function boxHit(px, py, aaWidth) {
+        const ax = px < 0 ? -px : px;
+        const ay = py < 0 ? -py : py;
+        const qx = ax - bxInner;
+        const qy = ay - byInner;
+        let d;
+        if (qx > 0 && qy > 0) {
+          d = Math.hypot(qx, qy) - rr;
+        } else {
+          d = (qx > qy ? qx : qy) - rr;
+        }
+        const h = 0.5 - d * aaWidth;
+        return h <= 0 ? 0 : (h >= 1 ? 1 : h);
+      }
+
+      let curY = minY;
+      const activeSpan = Math.max(1, maxY - minY);
+      const rowsPerChunk = Math.max(8, Math.floor(14000 / Math.max(1, maxX - minX)));
+
+      function processChunk() {
+        const endY = Math.min(maxY, curY + rowsPerChunk);
+
+        for (let y = curY; y < endY; y++) {
+          const dy = y - cy;
+          const rowBase = y * sw * 4;
+          const inInnerY = (y > innerTop && y < innerBottom);
+
+          const yBack = invTBack * y - cy;
+          const yMid = invTMid * y - cy;
+          const yFront = invTFront * y - cy;
+
+          for (let x = minX; x < maxX; x++) {
+            // Skip opaque interior of the photo (covered completely by the photo itself)
+            if (inInnerY && x > innerLeft && x < innerRight) continue;
+
+            const dx = x - cx;
+
+            // 1. Key Softbox Area Light Visibility (against 3-slice 3D rectangular slab)
+            const xBack = invTBack * x - cx;
+            const xMid = invTMid * x - cx;
+            const xFront = invTFront * x - cx;
+
+            let occKey = 0;
+            for (let i = 0; i < N_KEY; i++) {
+              const qx = keyQx[i];
+              const qy = keyQy[i];
+              let hit = boxHit(xBack + tBack * qx, yBack + tBack * qy, 0.72);
+              if (hit < 1) {
+                const h2 = boxHit(xMid + tMid * qx, yMid + tMid * qy, 0.72);
+                if (h2 > hit) hit = h2;
+                if (hit < 1) {
+                  const h3 = boxHit(xFront + tFront * qx, yFront + tFront * qy, 0.72);
+                  if (h3 > hit) hit = h3;
+                }
+              }
+              occKey += hit;
+            }
+            occKey *= invNKey;
+
+            // 2. Hemisphere Ambient Occlusion (Sky Dome visibility)
+            let occAo = 0;
+            for (let i = 0; i < N_AO; i++) {
+              let hit = boxHit(dx + aoDxBack[i], dy + aoDyBack[i], 0.56);
+              if (hit < 1) {
+                const h2 = boxHit(dx + aoDxFront[i], dy + aoDyFront[i], 0.56);
+                if (h2 > hit) hit = h2;
+              }
+              occAo += hit;
+            }
+            occAo *= invNAo;
+
+            // 3. Tight Physical Crevice Grounding
+            const cdx = dx - cShiftX;
+            const cdy = dy - cShiftY;
+            const cqx = (cdx < 0 ? -cdx : cdx) - bxInner;
+            const cqy = (cdy < 0 ? -cdy : cdy) - byInner;
+            const dCrev = (cqx > 0 && cqy > 0)
+              ? (Math.hypot(cqx, cqy) - rr)
+              : ((cqx > cqy ? cqx : cqy) - rr);
+            const occCrev = dCrev <= 0 ? 1 : Math.exp(-dCrev * invCreviceW);
+
+            // Early exit if completely unoccluded
+            if (occKey < 0.0005 && occAo < 0.0005 && occCrev < 0.002) continue;
+
+            // 4. Physical Studio Irradiance in Linear Space (warm-neutral key + cool ambient fill + GI floor)
+            const keyVis = 1 - occKey;
+            const aoVis = 1 - occAo;
+            const crevVis = 1 - creviceStrength * occCrev;
+
+            const irrR = (0.70 * keyVis + 0.22 * aoVis + 0.08) * crevVis;
+            const irrG = (0.68 * keyVis + 0.23 * aoVis + 0.09) * crevVis;
+            const irrB = (0.65 * keyVis + 0.25 * aoVis + 0.10) * crevVis;
+
+            const attR = 1 - darkT * (1 - irrR);
+            const attG = 1 - darkT * (1 - irrG);
+            const attB = 1 - darkT * (1 - irrB);
+
+            // Sub-LSB dithering to completely eliminate 8-bit gradient banding
+            const dither = fastHash01(x, y) - 0.5;
+            const idx = rowBase + (x << 2);
+            const r8 = linearToSrgb255(attR) + dither;
+            const g8 = linearToSrgb255(attG) + dither;
+            const b8 = linearToSrgb255(attB) + dither;
+
+            out[idx]     = r8 < 0 ? 0 : (r8 > 255 ? 255 : r8);
+            out[idx + 1] = g8 < 0 ? 0 : (g8 > 255 ? 255 : g8);
+            out[idx + 2] = b8 < 0 ? 0 : (b8 > 255 ? 255 : b8);
+          }
+        }
+
+        curY = endY;
+        if (onProgress) onProgress((curY - minY) / activeSpan);
+
+        if (curY < maxY) {
+          requestAnimationFrame(processChunk);
+        } else {
+          sctx.putImageData(imgData, 0, 0);
+          resolve(shadowCanvas);
+        }
+      }
+
+      requestAnimationFrame(processChunk);
+    });
+  }
+
   // --- Mode 1: FRAME Renderer ---
-  function renderFrame(targetCanvas, photoObj, maxPreviewDim = null, showGrid = false) {
+  function computeFrameGeometry(photoObj, maxPreviewDim = null) {
     const isPreview = Boolean(maxPreviewDim);
-    const src = (isPreview && photoObj.proxy) ? photoObj.proxy : photoObj.img;
     const origW = photoObj.width;
     const origH = photoObj.height;
     const f = state.frame;
     const ratio = f.borderPercent / 100;
 
-    // 1. Native cropped dimensions for inner photo
     const origAspect = origW / Math.max(1, origH);
     const innerAspect = parseAspectRatio(f.photoRatio, origW, origH);
     const baseInnerW = Math.round(origAspect > innerAspect ? origH * innerAspect : origW);
     const baseInnerH = Math.round(origAspect > innerAspect ? origH : origW / innerAspect);
 
-    // 2. Full-resolution output dimensions & inner photo placement
     let fullTotalW, fullTotalH, fullInnerW, fullInnerH;
     if (f.canvasRatio === 'original') {
       const outPadX = f.sizingRule === 'equal-margin'
@@ -691,7 +1004,6 @@
       fullInnerH = Math.round(fitH);
     }
 
-    // 3. Preview vs Export scaling
     let scale = 1;
     if (isPreview) {
       const maxSide = Math.max(fullTotalW, fullTotalH);
@@ -705,27 +1017,39 @@
     const padX = Math.round((totalW - innerW) / 2);
     const padY = Math.round((totalH - innerH) / 2);
     const minInnerSide = Math.min(innerW, innerH);
+    const radiusPx = Math.round((f.cornerRadius / 100) * (minInnerSide / 2));
 
-    if (targetCanvas.width !== totalW) targetCanvas.width = totalW;
-    if (targetCanvas.height !== totalH) targetCanvas.height = totalH;
+    return {
+      isPreview, innerAspect, fullTotalW, fullTotalH,
+      totalW, totalH, innerW, innerH, padX, padY, radiusPx
+    };
+  }
+
+  function renderFrame(targetCanvas, photoObj, maxPreviewDim = null, showGrid = false, physicalShadowCanvas = null) {
+    const f = state.frame;
+    const g = computeFrameGeometry(photoObj, maxPreviewDim);
+    const src = (g.isPreview && photoObj.proxy) ? photoObj.proxy : photoObj.img;
+
+    if (targetCanvas.width !== g.totalW) targetCanvas.width = g.totalW;
+    if (targetCanvas.height !== g.totalH) targetCanvas.height = g.totalH;
 
     const ctx = targetCanvas.getContext('2d');
     ctx.save();
     ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = isPreview ? 'medium' : 'high';
+    ctx.imageSmoothingQuality = g.isPreview ? 'medium' : 'high';
 
-    // 4. Outer Frame Background
+    // 1. Outer Frame Background
     if (f.fillMode === 'blur') {
-      const blurPx = Math.max(2, Math.round((f.blurAmount / 1000) * Math.max(totalW, totalH)));
+      const blurPx = Math.max(2, Math.round((f.blurAmount / 1000) * Math.max(g.totalW, g.totalH)));
       const exp = blurPx * 3;
       ctx.fillStyle = '#111111';
-      ctx.fillRect(0, 0, totalW, totalH);
+      ctx.fillRect(0, 0, g.totalW, g.totalH);
       ctx.save();
       ctx.filter = `blur(${blurPx}px) brightness(${f.blurBrightness}%) saturate(115%)`;
       drawCalCroppedPhoto(ctx, src, {
         x: -exp, y: -exp,
-        w: totalW + exp * 2, h: totalH + exp * 2
-      }, totalW / Math.max(1, totalH), 0, 0);
+        w: g.totalW + exp * 2, h: g.totalH + exp * 2
+      }, g.totalW / Math.max(1, g.totalH), 0, 0);
       ctx.restore();
     } else {
       let fillColor = f.solidColor;
@@ -734,47 +1058,73 @@
         fillColor = ref.palette[f.extractedIndex] || '#FFFFFF';
       }
       ctx.fillStyle = fillColor;
-      ctx.fillRect(0, 0, totalW, totalH);
+      ctx.fillRect(0, 0, g.totalW, g.totalH);
     }
 
-    // 5. Shadow & Inner Cropped Photo
-    const radiusPx = Math.round((f.cornerRadius / 100) * (minInnerSide / 2));
-
-    if (f.shadowStrength > 0 && (padX > 0 || padY > 0)) {
-      ctx.save();
-      const sBlur = Math.round((f.shadowStrength / 100) * (minInnerSide * 0.08));
-      ctx.shadowColor = `rgba(0, 0, 0, ${(f.shadowStrength / 100) * 0.55})`;
-      ctx.shadowBlur = sBlur;
-      ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = Math.round(sBlur * 0.35);
-      drawRoundedRectPath(ctx, padX, padY, innerW, innerH, radiusPx);
-      ctx.fillStyle = '#000000';
-      ctx.fill();
-      ctx.restore();
+    // 2. Shadow (3D Physical Shadow on Export / Fast Multi-Layer on Preview)
+    const photoRect = { x: g.padX, y: g.padY, w: g.innerW, h: g.innerH };
+    if (f.shadowStrength > 0 && (g.padX > 0 || g.padY > 0)) {
+      if (physicalShadowCanvas) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(physicalShadowCanvas, 0, 0, g.totalW, g.totalH);
+        ctx.restore();
+      } else {
+        drawPreviewLayeredShadow(ctx, photoRect, g.radiusPx, {
+          elevation: f.shadowStrength,
+          lightDir: f.shadowLightDir,
+          softness: f.shadowSoftness,
+          darkness: f.shadowDarkness
+        });
+      }
     }
 
+    // 3. Inner Cropped Photo
     const fc = photoObj.frameCrop || { offsetX: 0, offsetY: 0 };
     ctx.save();
-    if (radiusPx > 0) {
-      drawRoundedRectPath(ctx, padX, padY, innerW, innerH, radiusPx);
+    if (g.radiusPx > 0) {
+      drawRoundedRectPath(ctx, g.padX, g.padY, g.innerW, g.innerH, g.radiusPx);
       ctx.clip();
     }
-    drawCalCroppedPhoto(ctx, src, { x: padX, y: padY, w: innerW, h: innerH }, innerAspect, fc.offsetX, fc.offsetY);
+    drawCalCroppedPhoto(ctx, src, photoRect, g.innerAspect, fc.offsetX, fc.offsetY);
 
     if (showGrid && f.photoRatio !== 'original') {
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(padX + innerW / 3, padY); ctx.lineTo(padX + innerW / 3, padY + innerH);
-      ctx.moveTo(padX + (innerW * 2) / 3, padY); ctx.lineTo(padX + (innerW * 2) / 3, padY + innerH);
-      ctx.moveTo(padX, padY + innerH / 3); ctx.lineTo(padX + innerW, padY + innerH / 3);
-      ctx.moveTo(padX, padY + (innerH * 2) / 3); ctx.lineTo(padX + innerW, padY + (innerH * 2) / 3);
+      ctx.moveTo(g.padX + g.innerW / 3, g.padY); ctx.lineTo(g.padX + g.innerW / 3, g.padY + g.innerH);
+      ctx.moveTo(g.padX + (g.innerW * 2) / 3, g.padY); ctx.lineTo(g.padX + (g.innerW * 2) / 3, g.padY + g.innerH);
+      ctx.moveTo(g.padX, g.padY + g.innerH / 3); ctx.lineTo(g.padX + g.innerW, g.padY + g.innerH / 3);
+      ctx.moveTo(g.padX, g.padY + (g.innerH * 2) / 3); ctx.lineTo(g.padX + g.innerW, g.padY + (g.innerH * 2) / 3);
       ctx.stroke();
     }
     ctx.restore();
     ctx.restore();
 
-    return { totalW: fullTotalW, totalH: fullTotalH };
+    return { totalW: g.fullTotalW, totalH: g.fullTotalH };
+  }
+
+  async function renderFrameExportAsync(targetCanvas, photoObj, onProgress) {
+    const f = state.frame;
+    const g = computeFrameGeometry(photoObj, null);
+    let shadowCanvas = null;
+    if (f.shadowStrength > 0 && (g.padX > 0 || g.padY > 0)) {
+      shadowCanvas = await renderPhysical3DShadowAsync(
+        g.totalW, g.totalH,
+        { x: g.padX, y: g.padY, w: g.innerW, h: g.innerH },
+        g.radiusPx,
+        {
+          elevation: f.shadowStrength,
+          lightDir: f.shadowLightDir,
+          softness: f.shadowSoftness,
+          darkness: f.shadowDarkness
+        },
+        onProgress
+      );
+    }
+    return renderFrame(targetCanvas, photoObj, null, false, shadowCanvas);
   }
 
   // --- Mode 2: CROP Renderer ---
@@ -1030,7 +1380,7 @@
     ctx.drawImage(src, sx, sy, sw, sh, dest.x, dest.y, dest.w, dest.h);
   }
 
-  function renderCalendar(targetCanvas, photoObj, isPreview = true) {
+  function renderCalendar(targetCanvas, photoObj, isPreview = true, physicalShadowCanvas = null) {
     const c = state.cal;
     const src = (isPreview && photoObj.proxy) ? photoObj.proxy : photoObj.img;
     const aspect = parseAspectRatio(c.canvasRatio, photoObj.width, photoObj.height);
@@ -1087,13 +1437,21 @@
       photoRect = { x: (canvasW - pw) / 2, y: (canvasH - ph) / 2, w: pw, h: ph };
 
       if (c.photoShadow && c.frameThickness > 0) {
-        ctx.save();
-        ctx.shadowColor = 'rgba(0,0,0,0.38)';
-        ctx.shadowBlur = shortSide * 0.022;
-        ctx.shadowOffsetY = shortSide * 0.006;
-        ctx.fillStyle = '#000';
-        ctx.fillRect(photoRect.x, photoRect.y, photoRect.w, photoRect.h);
-        ctx.restore();
+        if (physicalShadowCanvas) {
+          ctx.save();
+          ctx.globalCompositeOperation = 'multiply';
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(physicalShadowCanvas, 0, 0, canvasW, canvasH);
+          ctx.restore();
+        } else {
+          drawPreviewLayeredShadow(ctx, photoRect, 0, {
+            elevation: 45,
+            lightDir: 'top',
+            softness: 55,
+            darkness: 60
+          });
+        }
       }
 
       drawCalCroppedPhoto(ctx, src, photoRect, pAspect, c.cropOffsetX, c.cropOffsetY);
@@ -1263,6 +1621,30 @@
 
     ctx.restore();
     return { totalW: full.w, totalH: full.h };
+  }
+
+  async function renderCalendarExportAsync(targetCanvas, photoObj, onProgress) {
+    const c = state.cal;
+    let shadowCanvas = null;
+    if (c.frameMode !== 'none' && c.photoShadow && c.frameThickness > 0) {
+      const aspect = parseAspectRatio(c.canvasRatio, photoObj.width, photoObj.height);
+      const full = calcDimensionsForMP(24, aspect);
+      const shortSide = Math.min(full.w, full.h);
+      const pad = shortSide * (c.frameThickness / 100);
+      const availW = Math.max(10, full.w - pad * 2);
+      const availH = Math.max(10, full.h - pad * 2);
+      const pAspect = parseAspectRatio(c.photoRatio, photoObj.width, photoObj.height);
+      let pw = availW;
+      let ph = pw / pAspect;
+      if (ph > availH) { ph = availH; pw = ph * pAspect; }
+      const photoRect = { x: (full.w - pw) / 2, y: (full.h - ph) / 2, w: pw, h: ph };
+      shadowCanvas = await renderPhysical3DShadowAsync(
+        full.w, full.h, photoRect, 0,
+        { elevation: 45, lightDir: 'top', softness: 55, darkness: 60 },
+        onProgress
+      );
+    }
+    return renderCalendar(targetCanvas, photoObj, false, shadowCanvas);
   }
 
   // --- Mode 5: RISO Renderer (Optimized Math + Fast Integer Hash + Chunked 24MP) ---
@@ -2014,11 +2396,38 @@
       schedulePreviewRender();
     });
 
+    const updateShadowOptsVisibility = () => {
+      $('frame-shadowOpts').hidden = state.frame.shadowStrength <= 0;
+    };
+
     $('frame-shadow').addEventListener('input', (e) => {
       state.frame.shadowStrength = parseInt(e.target.value, 10);
       $('frame-shadowVal').textContent = `${state.frame.shadowStrength}%`;
+      updateShadowOptsVisibility();
       schedulePreviewRender();
     });
+
+    document.querySelectorAll('[data-shadow-dir]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.frame.shadowLightDir = btn.dataset.shadowDir;
+        document.querySelectorAll('[data-shadow-dir]').forEach(b => b.classList.toggle('active', b === btn));
+        schedulePreviewRender();
+      });
+    });
+
+    $('frame-shadowSoft').addEventListener('input', (e) => {
+      state.frame.shadowSoftness = parseInt(e.target.value, 10);
+      $('frame-shadowSoftVal').textContent = `${state.frame.shadowSoftness}%`;
+      schedulePreviewRender();
+    });
+
+    $('frame-shadowDark').addEventListener('input', (e) => {
+      state.frame.shadowDarkness = parseInt(e.target.value, 10);
+      $('frame-shadowDarkVal').textContent = `${state.frame.shadowDarkness}%`;
+      schedulePreviewRender();
+    });
+
+    updateShadowOptsVisibility();
   }
 
   // --- Crop Controls ---
@@ -2922,16 +3331,28 @@
 
           let filename;
           if (state.mode === 'frame') {
-            dom.exportProgressText.textContent = 'フレームを合成中...';
-            renderFrame(workCanvas, photo, null);
+            const has3DShadow = state.frame.shadowStrength > 0;
+            dom.exportProgressText.textContent = has3DShadow
+              ? '3D物理影をレンダリング中...'
+              : 'フレームを合成中...';
+            await renderFrameExportAsync(workCanvas, photo, (frac) => {
+              const overall = ((i + frac) / total) * 100;
+              dom.exportProgressBar.style.width = `${Math.round(overall)}%`;
+            });
             filename = `${photo.name}_framed.jpg`;
           } else if (state.mode === 'crop') {
             dom.exportProgressText.textContent = 'クロップ書き出し中...';
             const info = renderCrop(workCanvas, photo, null, false);
             filename = `${photo.name}_crop_${info.ratioStr.replace(':', 'x')}.jpg`;
           } else {
-            dom.exportProgressText.textContent = '24MP カレンダーを合成中...';
-            renderCalendar(workCanvas, photo, false);
+            const hasCalShadow = state.cal.frameMode !== 'none' && state.cal.photoShadow && state.cal.frameThickness > 0;
+            dom.exportProgressText.textContent = hasCalShadow
+              ? '24MP カレンダー＆3D物理影をレンダリング中...'
+              : '24MP カレンダーを合成中...';
+            await renderCalendarExportAsync(workCanvas, photo, (frac) => {
+              const overall = ((i + frac) / total) * 100;
+              dom.exportProgressBar.style.width = `${Math.round(overall)}%`;
+            });
             const d = photo.selectedDate;
             filename = `Calendar_${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}_24MP_${i + 1}.jpg`;
           }

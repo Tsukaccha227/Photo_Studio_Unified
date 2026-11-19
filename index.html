@@ -313,12 +313,45 @@
                   </div>
                   <input id="frame-radius" type="range" min="0" max="20" step="0.5" value="0">
                 </div>
+
+                <hr class="divider">
+
                 <div class="control-group">
                   <div class="control-row">
-                    <span class="control-label">写真の影（立体感）</span>
+                    <span class="control-label">写真の影（浮き高さ / 立体感）</span>
                     <span id="frame-shadowVal" class="value-pill">0%</span>
                   </div>
                   <input id="frame-shadow" type="range" min="0" max="100" step="5" value="0">
+                </div>
+
+                <div id="frame-shadowOpts" class="sub-box" hidden>
+                  <div class="control-group">
+                    <div class="control-row">
+                      <span class="control-label">光の向き（スタジオライト）</span>
+                      <span class="brand-tag">3D物理影</span>
+                    </div>
+                    <div class="segmented">
+                      <button type="button" class="seg-btn active" data-shadow-dir="top">真上</button>
+                      <button type="button" class="seg-btn" data-shadow-dir="left">左上</button>
+                      <button type="button" class="seg-btn" data-shadow-dir="right">右上</button>
+                      <button type="button" class="seg-btn" data-shadow-dir="front">正面</button>
+                    </div>
+                  </div>
+                  <div class="control-group">
+                    <div class="control-row">
+                      <span class="control-label">光の柔らかさ（ソフトボックス）</span>
+                      <span id="frame-shadowSoftVal" class="value-pill">55%</span>
+                    </div>
+                    <input id="frame-shadowSoft" type="range" min="10" max="100" step="5" value="55">
+                  </div>
+                  <div class="control-group">
+                    <div class="control-row">
+                      <span class="control-label">影の濃さ</span>
+                      <span id="frame-shadowDarkVal" class="value-pill">68%</span>
+                    </div>
+                    <input id="frame-shadowDark" type="range" min="20" max="100" step="2" value="68">
+                  </div>
+                  <p class="hint-text">プレビューは高速な多層影で表示し、書き出し時に3D面光源＋環境遮蔽（AO）による物理影をレンダリングします。</p>
                 </div>
               </div>
             </div>
