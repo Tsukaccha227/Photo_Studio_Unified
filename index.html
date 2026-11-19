@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#131317">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="PhotoStudio">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Photo Studio Unified</title>
+
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/svg+xml" href="./icon-192.svg">
+  <link rel="apple-touch-icon" href="./icon-192.svg">
+
+  <!-- Google Fonts: Nova Flat (for Calendar mode) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nova+Flat&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="./style.css">
+
+  <!-- Minimal deferred external libs (fallback built-in if offline) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/exifr/dist/full.umd.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+  <input id="fileInput" type="file" accept="image/*" multiple hidden>
+  <input id="customLogoInput" type="file" accept="image/*" hidden>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <div class="app-shell">
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f3f3f6" stroke-width="2.2">
+            <rect x="3" y="3" width="18" height="18" rx="4"/>
+            <circle cx="9.5" cy="10" r="2.6" fill="#3b82f6" stroke="none"/>
+            <circle cx="14.2" cy="13.8" r="2.8" fill="#dbe734" stroke="none"/>
+            <circle cx="14.6" cy="8.8" r="1.6" fill="#ff48b0" stroke="none"/>
+          </svg>
+        </div>
+        <h1 class="brand-title">Photo Studio <span class="brand-tag">24MP</span></h1>
+      </div>
+
+      <!-- Desktop / Tablet Mode Switcher -->
+      <nav class="mode-nav" aria-label="スタジオモード">
+        <button type="button" class="mode-btn active" data-mode="frame">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
+          <span>フレーム</span>
+        </button>
+        <button type="button" class="mode-btn" data-mode="crop">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
+          <span>クロップ</span>
+        </button>
+        <button type="button" class="mode-btn" data-mode="collage">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          <span>コラージュ</span>
+        </button>
+        <button type="button" class="mode-btn" data-mode="calendar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+          <span>カレンダー</span>
+        </button>
+        <button type="button" class="mode-btn" data-mode="riso">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="10" r="5"/><circle cx="15" cy="14" r="5"/></svg>
+          <span>リソ</span>
+        </button>
+      </nav>
+
+      <div class="header-actions">
+        <button id="installAppBtn" type="button" class="btn btn-emerald btn-sm" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          <span>導入</span>
+        </button>
+        <button id="settingsBtn" type="button" class="btn btn-secondary btn-icon" title="アプリ設定・PWAアイコン生成">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09c-.66 0-1.25.4-1.51 1z"/></svg>
+        </button>
+        <button id="exportBtn" type="button" class="btn btn-primary" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span id="exportBtnText">書き出し</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Mobile Mode Bar -->
+    <div class="mobile-mode-bar">
+      <nav class="mode-nav" aria-label="スタジオモード（モバイル）">
+        <button type="button" class="mode-btn active" data-mode="frame">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
+          <span>フレーム</span>
+        </button>
+        <button type="button" class="mode-btn" data-mode="crop">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
+          <span>クロップ</span>
+        </button>
+        <button type="button" class="mode-btn" data-mode="collage">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          <span>コラージュ</span>
+        </button>
+        <button type="button" class="mode-btn" data-mode="calendar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+          <span>カレンダー</span>
+        </button>
+        <button type="button" class="mode-btn" data-mode="riso">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="10" r="5"/><circle cx="15" cy="14" r="5"/></svg>
+          <span>リソ</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- Main Workspace -->
+    <div class="workspace">
+      <!-- Left: Preview Stage & Filmstrip -->
+      <main class="stage-pane">
+        <div id="stageCanvasArea" class="stage-canvas-area">
+          <canvas id="previewCanvas"></canvas>
+
+          <div id="infoBadge" class="stage-badge stage-badge-tl" hidden>
+            <span id="infoResolution">-- × --</span>
+            <span class="stage-badge-sep">|</span>
+            <span id="infoIndex">1 / 1</span>
+          </div>
+
+          <div id="dragHintBadge" class="stage-badge stage-badge-bc" hidden>
+            <span id="dragHintText">ドラッグで位置調整</span>
+          </div>
+
+          <div id="stageOverlayActions" class="stage-overlay-actions" hidden>
+            <button id="addPhotoBtn" type="button" class="overlay-pill accent">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span>追加</span>
+            </button>
+            <button id="clearAllBtn" type="button" class="overlay-pill danger">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+              <span>クリア</span>
+            </button>
+          </div>
+
+          <!-- Empty State -->
+          <div id="emptyState" class="empty-state">
+            <div class="empty-card">
+              <div class="empty-icon-ring">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+              </div>
+              <h2>写真を読み込む（複数選択可）</h2>
+              <p>読み込んだ写真はフレーム・クロップ・コラージュ・カレンダー・リソグラフの5モードすべてで共通利用できます。</p>
+              <div class="empty-actions">
+                <button id="selectPhotoBtn" type="button" class="btn btn-primary">カメラロール / フォルダから選ぶ</button>
+                <button id="loadSampleBtn" type="button" class="btn btn-secondary">サンプルで試す</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom Filmstrip -->
+        <div id="filmstripBar" class="filmstrip-bar" hidden>
+          <div id="filmstripList" class="filmstrip-list no-scrollbar"></div>
+          <div id="exifStrip" class="exif-strip"></div>
+        </div>
+      </main>
+
+      <!-- Right: Mode-Specific Control Inspector -->
+      <aside class="inspector-pane">
+
+        <!-- ==============================================================
+             MODE 1: FRAME (フチ付け)
+             ============================================================== -->
+        <section id="panel-frame" class="mode-panel">
+          <div class="sub-tabs" data-tabgroup="frame">
+            <button type="button" class="sub-tab-btn active" data-subtab="frame-color">色・抽出</button>
+            <button type="button" class="sub-tab-btn" data-subtab="frame-blur">写真ぼかし</button>
+            <button type="button" class="sub-tab-btn" data-subtab="frame-size">比率・角・影</button>
+          </div>
+
+          <div class="panel-scroll">
+            <div class="card">
+              <div class="control-group">
+                <div class="control-row">
+                  <span class="control-label">フチの太さ（等距離）</span>
+                  <span id="frame-widthVal" class="value-pill">8%</span>
+                </div>
+                <input id="frame-width" type="range" min="0" max="35" step="0.5" value="8">
+              </div>
+            </div>
+
+            <!-- Subtab: Color -->
+            <div id="frame-color" class="subtab-content">
+              <div class="card">
+                <div class="card-title"><span>定番カラー &amp; 自由選択</span></div>
+                <div class="swatch-row">
+                  <div class="swatch-group">
+                    <button type="button" class="color-dot active" data-frame-color="#FFFFFF" style="background:#FFFFFF" title="白"></button>
+                    <button type="button" class="color-dot" data-frame-color="#F8FAFC" style="background:#F8FAFC" title="オフホワイト"></button>
+                    <button type="button" class="color-dot" data-frame-color="#E5E5E5" style="background:#E5E5E5" title="ライトグレー"></button>
+                    <button type="button" class="color-dot" data-frame-color="#18181B" style="background:#18181B" title="ダークグレー"></button>
+                    <button type="button" class="color-dot" data-frame-color="#000000" style="background:#000000" title="黒"></button>
+                  </div>
+                  <label class="color-picker-circle" title="カスタムカラー">
+                    <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg></span>
+                    <input id="frame-customColor" type="color" value="#ffffff">
+                  </label>
+                </div>
+              </div>
+
+              <div class="card" style="margin-top:12px;">
+                <div class="card-title"><span>写真から抽出した5色</span></div>
+                <div id="frame-palette" class="extracted-grid">
+                  <p class="hint-text" style="grid-column:span 5;">写真を読み込むと自動で5色を抽出します</p>
+                </div>
+                <hr class="divider">
+                <label class="toggle-row">
+                  <span>一括保存時も各写真ごとの抽出色を使う</span>
+                  <input id="frame-autoPerPhoto" type="checkbox" class="toggle-switch" checked>
+                </label>
+              </div>
+            </div>
+
+            <!-- Subtab: Blur -->
+            <div id="frame-blur" class="subtab-content" hidden>
+              <div class="card">
+                <div class="card-title"><span>背景ぼかしフチ</span><span class="brand-tag">適用中</span></div>
+                <p class="hint-text">写真自身を拡大・ぼかし加工してフチ背景を生成します。</p>
+                <div class="control-group">
+                  <div class="control-row">
+                    <span class="control-label">ぼかしの強さ</span>
+                    <span id="frame-blurAmtVal" class="value-pill">35px</span>
+                  </div>
+                  <input id="frame-blurAmt" type="range" min="5" max="100" value="35">
+                </div>
+                <div class="control-group">
+                  <div class="control-row">
+                    <span class="control-label">フチの明るさ</span>
+                    <span id="frame-blurBrightVal" class="value-pill">100%</span>
+                  </div>
+                  <input id="frame-blurBright" type="range" min="40" max="160" value="100">
+                </div>
+              </div>
+            </div>
+
+            <!-- Subtab: Size / Radius / Shadow -->
+            <div id="frame-size" class="subtab-content" hidden>
+              <div class="card">
+                <div class="card-title"><span>比率と距離のルール</span></div>
+                <button type="button" class="option-card-btn active" data-frame-rule="equal-margin">
+                  <strong>上下左右が完全等幅</strong>
+                  <span>4辺すべて全く同じピクセル距離でフチを追加</span>
+                </button>
+                <button type="button" class="option-card-btn" data-frame-rule="exact-aspect">
+                  <strong>外枠も同アスペクト比</strong>
+                  <span>完成画像の縦横比も元写真と100%同一に保つ</span>
+                </button>
+              </div>
+
+              <div class="card" style="margin-top:12px;">
+                <div class="control-group">
+                  <div class="control-row">
+                    <span class="control-label">写真の角丸</span>
+                    <span id="frame-radiusVal" class="value-pill">0%</span>
+                  </div>
+                  <input id="frame-radius" type="range" min="0" max="20" step="0.5" value="0">
+                </div>
+                <div class="control-group">
+                  <div class="control-row">
+                    <span class="control-label">写真の影（立体感）</span>
+                    <span id="frame-shadowVal" class="value-pill">0%</span>
+                  </div>
+                  <input id="frame-shadow" type="range" min="0" max="100" step="5" value="0">
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==============================================================
+             MODE 2: CROP (クロップ)
+             ============================================================== -->
+        <section id="panel-crop" class="mode-panel" hidden>
+          <div class="panel-header">
+            <span class="panel-header-title">クロップ（切り抜き・位置調整）</span>
+            <button id="crop-resetBtn" type="button" class="btn btn-secondary btn-sm">位置リセット</button>
+          </div>
+
+          <div class="panel-scroll">
+            <div class="card">
+              <div class="card-title">
+                <span>アスペクト比</span>
+                <div class="segmented" style="width:128px;">
+                  <button type="button" class="seg-btn active-blue" data-crop-orient="portrait">縦長</button>
+                  <button type="button" class="seg-btn" data-crop-orient="landscape">横長</button>
+                </div>
+              </div>
+              <div class="ratio-grid-6">
+                <button type="button" class="chip-btn" data-crop-base="1:1"><span class="ratio-text">1:1</span><span class="chip-sub">正方形</span></button>
+                <button type="button" class="chip-btn active" data-crop-base="4:5"><span class="ratio-text">4:5</span><span class="chip-sub">Insta</span></button>
+                <button type="button" class="chip-btn" data-crop-base="3:4"><span class="ratio-text">3:4</span><span class="chip-sub">標準</span></button>
+                <button type="button" class="chip-btn" data-crop-base="2:3"><span class="ratio-text">2:3</span><span class="chip-sub">一眼</span></button>
+                <button type="button" class="chip-btn" data-crop-base="9:16"><span class="ratio-text">9:16</span><span class="chip-sub">ワイド</span></button>
+                <button type="button" class="chip-btn" data-crop-base="9:21"><span class="ratio-text">9:21</span><span class="chip-sub">シネマ</span></button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="control-group">
+                <div class="control-row">
+                  <span class="control-label">拡大ズーム</span>
+                  <span id="crop-zoomVal" class="value-pill">1.00x</span>
+                </div>
+                <input id="crop-zoom" type="range" min="1" max="3" step="0.02" value="1">
+              </div>
+
+              <hr class="divider">
+
+              <div class="card-title"><span>位置微調整（画面ドラッグ可）</span></div>
+              <div class="dual-grid">
+                <div class="control-group">
+                  <div class="control-row">
+                    <span class="control-label">左右 (X)</span>
+                    <span id="crop-panXVal" class="value-pill">0%</span>
+                  </div>
+                  <input id="crop-panX" type="range" min="-100" max="100" step="1" value="0">
+                </div>
+                <div class="control-group">
+                  <div class="control-row">
+                    <span class="control-label">上下 (Y)</span>
+                    <span id="crop-panYVal" class="value-pill">0%</span>
+                  </div>
+                  <input id="crop-panY" type="range" min="-100" max="100" step="1" value="0">
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==============================================================
+             MODE 3: COLLAGE (24MP コラージュ)
+             ============================================================== -->
+        <section id="panel-collage" class="mode-panel" hidden>
+          <div class="panel-header">
+            <span class="panel-header-title">コラージュ（24MP 出力）</span>
+            <button id="collage-resetBtn" type="button" class="btn btn-secondary btn-sm">全枠リセット</button>
+          </div>
+
+          <div class="panel-scroll">
+            <div class="card">
+              <div class="card-title">
+                <span>① キャンバス比率</span>
+                <div class="segmented" style="width:128px;">
+                  <button type="button" class="seg-btn active-blue" data-collage-orient="portrait">縦長</button>
+                  <button type="button" class="seg-btn" data-collage-orient="landscape">横長</button>
+                </div>
+              </div>
+              <div class="ratio-grid-6">
+                <button type="button" class="chip-btn" data-collage-base="1:1"><span class="ratio-text">1:1</span></button>
+                <button type="button" class="chip-btn active" data-collage-base="4:5"><span class="ratio-text">4:5</span></button>
+                <button type="button" class="chip-btn" data-collage-base="3:4"><span class="ratio-text">3:4</span></button>
+                <button type="button" class="chip-btn" data-collage-base="2:3"><span class="ratio-text">2:3</span></button>
+                <button type="button" class="chip-btn" data-collage-base="9:16"><span class="ratio-text">9:16</span></button>
+                <button type="button" class="chip-btn" data-collage-base="9:21"><span class="ratio-text">9:21</span></button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title"><span>② 分割数 &amp; レイアウト</span></div>
+              <div class="ratio-grid-3">
+                <button type="button" class="chip-btn active" data-collage-count="2">2分割</button>
+                <button type="button" class="chip-btn" data-collage-count="3">3分割</button>
+                <button type="button" class="chip-btn" data-collage-count="4">4分割</button>
+              </div>
+              <div id="collage-layoutGrid" class="layout-grid"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-title"><span>③ 外枠・間隔・カラー</span></div>
+              <div class="control-group">
+                <div class="control-row">
+                  <span class="control-label">キャンバスの外枠</span>
+                  <span id="collage-outerVal" class="value-pill">3.0%</span>
+                </div>
+                <input id="collage-outer" type="range" min="0" max="15" step="0.5" value="3">
+              </div>
+              <div class="control-group">
+                <div class="control-row">
+                  <span class="control-label">画像間の間隔</span>
+                  <span id="collage-gapVal" class="value-pill">1.5%</span>
+                </div>
+                <input id="collage-gap" type="range" min="0" max="10" step="0.2" value="1.5">
+              </div>
+              <div class="swatch-row">
+                <span class="control-label">枠カラー</span>
+                <div class="swatch-group">
+                  <button type="button" class="color-dot active" data-collage-color="#FFFFFF" style="background:#FFFFFF"></button>
+                  <button type="button" class="color-dot" data-collage-color="#F8FAFC" style="background:#F8FAFC"></button>
+                  <button type="button" class="color-dot" data-collage-color="#18181B" style="background:#18181B"></button>
+                  <button type="button" class="color-dot" data-collage-color="#000000" style="background:#000000"></button>
+                  <label class="color-picker-circle" title="カスタムカラー">
+                    <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg></span>
+                    <input id="collage-customColor" type="color" value="#ffffff">
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="control-group">
+                <div class="control-row">
+                  <span class="control-label">選択中の枠（枠 <span id="collage-cellNum" class="value-pill">1</span>）の拡大率</span>
+                  <span id="collage-cellZoomVal" class="value-pill">1.00x</span>
+                </div>
+                <input id="collage-cellZoom" type="range" min="1" max="3" step="0.02" value="1">
+              </div>
+              <p class="hint-text">
+                ・ドラッグ：枠内の写真位置を移動<br>
+                ・<strong>長押ししてドラッグ</strong>：他の枠と写真を入れ替え<br>
+                ・下のサムネイルタップ：選択枠の写真を差し替え
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==============================================================
+             MODE 4: CALENDAR (24MP Exifカレンダー & Tcロゴ)
+             ============================================================== -->
+        <section id="panel-calendar" class="mode-panel" hidden>
+          <div class="sub-tabs" data-tabgroup="cal">
+            <button type="button" class="sub-tab-btn active" data-subtab="cal-datetime">日時・配置</button>
+            <button type="button" class="sub-tab-btn" data-subtab="cal-frame">枠・比率</button>
+            <button type="button" class="sub-tab-btn" data-subtab="cal-color">色・ロゴ</button>
+          </div>
+
+          <div class="panel-scroll">
+            <!-- Subtab 1: Datetime & Layout -->
+            <div id="cal-datetime" class="subtab-content">
+              <div class="card">
+                <div class="card-title">
+                  <span>撮影日時（Exif自動抽出）</span>
+                  <span id="cal-exifSource" class="chip-sub"></span>
+                </div>
+                <input id="cal-dateInput" type="datetime-local" class="input-field">
+                <div class="ratio-grid-3">
+                  <button id="cal-prevDay" type="button" class="btn btn-secondary btn-sm">◀ 前日</button>
+                  <button id="cal-nextDay" type="button" class="btn btn-secondary btn-sm">翌日 ▶</button>
+                  <button id="cal-resetExif" type="button" class="btn btn-secondary btn-sm">Exifに戻す</button>
+                </div>
+                <label class="toggle-row">
+                  <span>時刻を表示する (AM/PM)</span>
+                  <input id="cal-showTime" type="checkbox" class="toggle-switch" checked>
+                </label>
+              </div>
+
+              <div class="card" style="margin-top:12px;">
+                <div class="card-title"><span>カレンダー＆ロゴ配置</span></div>
+                <div class="control-group">
+                  <span class="control-label">スタンプ配置基準</span>
+                  <div class="segmented">
+                    <button type="button" class="seg-btn active" data-cal-target="photo">写真の内側</button>
+                    <button type="button" class="seg-btn" data-cal-target="canvas">キャンバス全体</button>
+                  </div>
+                </div>
+                <div class="control-group">
+                  <span class="control-label">カレンダー位置</span>
+                  <div class="segmented">
+                    <button type="button" class="seg-btn active" data-cal-pos="bottom-left">左下</button>
+                    <button type="button" class="seg-btn" data-cal-pos="bottom-right">右下</button>
+                  </div>
+                </div>
+                <div class="control-group">
+                  <div class="control-row">
+                    <span class="control-label">カレンダーサイズ</span>
+                    <span id="cal-scaleVal" class="value-pill">100%</span>
+                  </div>
+                  <input id="cal-scale" type="range" min="50" max="160" value="100">
+                </div>
+                <div class="control-group">
+                  <div class="control-row">
+                    <span class="control-label">カレンダー端余白 (X / Y)</span>
+                    <span id="cal-marginVal" class="value-pill">6.5% / 6.0%</span>
+                  </div>
+                  <div class="dual-grid">
+                    <input id="cal-marginX" type="range" min="1" max="20" step="0.5" value="6.5">
+                    <input id="cal-marginY" type="range" min="1" max="20" step="0.5" value="6.0">
+                  </div>
+                </div>
+                <div class="control-group">
+                  <div class="control-row">
+                    <span class="control-label">上部ロゴサイズ</span>
+                    <span id="cal-logoScaleVal" class="value-pill">100%</span>
+                  </div>
+                  <input id="cal-logoScale" type="range" min="50" max="160" value="100">
+                </div>
+                <div class="control-group">
+                  <div class="control-row">
+                    <span class="control-label">上部ロゴ上端余白</span>
+                    <span id="cal-logoMarginYVal" class="value-pill">4.2%</span>
+                  </div>
+                  <input id="cal-logoMarginY" type="range" min="1" max="15" step="0.2" value="4.2">
+                </div>
+              </div>
+            </div>
+
+            <!-- Subtab 2: Frame & Aspect Ratio -->
+            <div id="cal-frame" class="subtab-content" hidden>
+              <div class="card">
+                <div class="card-title"><span>外枠（キャンバス全体）の比率</span></div>
+                <div id="cal-canvasRatios" class="ratio-grid-5">
+                  <button type="button" class="chip-btn active" data-ratio="original">元比率</button>
+                  <button type="button" class="chip-btn" data-ratio="3:2">3:2</button>
+                  <button type="button" class="chip-btn" data-ratio="4:3">4:3</button>
+                  <button type="button" class="chip-btn" data-ratio="16:9">16:9</button>
+                  <button type="button" class="chip-btn" data-ratio="1:1">1:1</button>
+                  <button type="button" class="chip-btn" data-ratio="4:5">4:5</button>
+                  <button type="button" class="chip-btn" data-ratio="2:3">2:3</button>
+                  <button type="button" class="chip-btn" data-ratio="3:4">3:4</button>
+                  <button type="button" class="chip-btn" data-ratio="9:16">9:16</button>
+                </div>
+              </div>
+
+              <div class="card" style="margin-top:12px;">
+                <div class="card-title">
+                  <span>中の写真の比率（クロップ）</span>
+                  <button id="cal-resetCrop" type="button" class="btn-link">中央に戻す</button>
+                </div>
+                <div id="cal-photoRatios" class="ratio-grid-5">
+                  <button type="button" class="chip-btn active" data-ratio="original">元比率</button>
+                  <button type="button" class="chip-btn" data-ratio="3:2">3:2</button>
+                  <button type="button" class="chip-btn" data-ratio="4:3">4:3</button>
+                  <button type="button" class="chip-btn" data-ratio="16:9">16:9</button>
+                  <button type="button" class="chip-btn" data-ratio="1:1">1:1</button>
+                  <button type="button" class="chip-btn" data-ratio="4:5">4:5</button>
+                  <button type="button" class="chip-btn" data-ratio="2:3">2:3</button>
+                  <button type="button" class="chip-btn" data-ratio="3:4">3:4</button>
+                  <button type="button" class="chip-btn" data-ratio="9:16">9:16</button>
+                </div>
+                <div class="dual-grid">
+                  <div class="control-group">
+                    <span class="control-label">オフセット X</span>
+                    <input id="cal-offsetX" type="range" min="-100" max="100" value="0">
+                  </div>
+                  <div class="control-group">
+                    <span class="control-label">オフセット Y</span>
+                    <input id="cal-offsetY" type="range" min="-100" max="100" value="0">
+                  </div>
+                </div>
+              </div>
+
+              <div class="card" style="margin-top:12px;">
+                <div class="card-title"><span>背景・外枠デザイン</span></div>
+                <div class="segmented">
+                  <button type="button" class="seg-btn active" data-cal-framemode="none">枠なし</button>
+                  <button type="button" class="seg-btn" data-cal-framemode="solid">単色枠</button>
+                  <button type="button" class="seg-btn" data-cal-framemode="blur">ぼかし背景</button>
+                </div>
+                <div class="control-group">
+                  <div class="control-row">
+                    <span class="control-label">外枠の太さ</span>
+                    <span id="cal-frameThickVal" class="value-pill">6.0%</span>
+                  </div>
+                  <input id="cal-frameThick" type="range" min="0" max="25" step="0.5" value="6.0">
+                </div>
+
+                <div id="cal-solidOpts" class="sub-box" hidden>
+                  <div class="swatch-row">
+                    <span class="control-label">単色枠の背景色</span>
+                    <div class="swatch-group">
+                      <button type="button" class="color-dot" data-cal-preset="cal-frameColor" data-color="#FFFFFF" style="background:#FFF"></button>
+                      <button type="button" class="color-dot" data-cal-preset="cal-frameColor" data-color="#111111" style="background:#111"></button>
+                      <label class="color-picker-circle"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg></span><input id="cal-frameColor" type="color" value="#ffffff"></label>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="cal-blurOpts" class="sub-box" hidden>
+                  <div class="control-group">
+                    <div class="control-row">
+                      <span class="control-label">ぼかし強度</span>
+                      <span id="cal-blurAmtVal" class="value-pill">40px</span>
+                    </div>
+                    <input id="cal-blurAmt" type="range" min="10" max="120" value="40">
+                  </div>
+                  <div class="control-group">
+                    <div class="control-row">
+                      <span class="control-label">ぼかし背景の明るさ</span>
+                      <span id="cal-blurBrightVal" class="value-pill">85%</span>
+                    </div>
+                    <input id="cal-blurBright" type="range" min="30" max="130" value="85">
+                  </div>
+                  <label class="toggle-row">
+                    <span>写真の周りに細い白フチ</span>
+                    <input id="cal-innerBorder" type="checkbox" class="toggle-switch">
+                  </label>
+                </div>
+
+                <label class="toggle-row">
+                  <span>写真のドロップシャドウ</span>
+                  <input id="cal-photoShadow" type="checkbox" class="toggle-switch" checked>
+                </label>
+              </div>
+            </div>
+
+            <!-- Subtab 3: Color & Logo -->
+            <div id="cal-color" class="subtab-content" hidden>
+              <div class="card">
+                <div class="card-title"><span>カラー設定</span></div>
+                <div class="swatch-row">
+                  <span class="control-label">基本文字色</span>
+                  <div class="swatch-group">
+                    <button type="button" class="color-dot" data-cal-preset="cal-textColor" data-color="#FFFFFF" style="background:#FFF"></button>
+                    <button type="button" class="color-dot" data-cal-preset="cal-textColor" data-color="#1A1A1A" style="background:#1A1A1A"></button>
+                    <label class="color-picker-circle"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg></span><input id="cal-textColor" type="color" value="#ffffff"></label>
+                  </div>
+                </div>
+                <div class="swatch-row">
+                  <span class="control-label">上部ロゴ＆ライン色</span>
+                  <div class="swatch-group">
+                    <button type="button" class="color-dot" data-cal-preset="cal-logoColor" data-color="#FFFFFF" style="background:#FFF"></button>
+                    <button type="button" class="color-dot" data-cal-preset="cal-logoColor" data-color="#1A1A1A" style="background:#1A1A1A"></button>
+                    <label class="color-picker-circle"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg></span><input id="cal-logoColor" type="color" value="#ffffff"></label>
+                  </div>
+                </div>
+                <div class="swatch-row">
+                  <span class="control-label">撮影日リング色</span>
+                  <div class="swatch-group">
+                    <button type="button" class="color-dot" data-cal-preset="cal-ringColor" data-color="#DBE734" style="background:#DBE734"></button>
+                    <button type="button" class="color-dot" data-cal-preset="cal-ringColor" data-color="#FFFFFF" style="background:#FFF"></button>
+                    <button type="button" class="color-dot" data-cal-preset="cal-ringColor" data-color="#FF5252" style="background:#FF5252"></button>
+                    <label class="color-picker-circle"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg></span><input id="cal-ringColor" type="color" value="#dbe734"></label>
+                  </div>
+                </div>
+                <hr class="divider">
+                <div class="control-group">
+                  <span class="control-label">土日配色</span>
+                  <div class="segmented">
+                    <button type="button" class="seg-btn active" data-cal-weekend="mono">基本色と統一</button>
+                    <button type="button" class="seg-btn" data-cal-weekend="color">土日カラー</button>
+                  </div>
+                </div>
+                <div id="cal-weekendOpts" class="sub-box" hidden>
+                  <div class="swatch-row">
+                    <span class="control-label">日曜日 (Sunday)</span>
+                    <label class="color-picker-circle"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg></span><input id="cal-sunColor" type="color" value="#ff5252"></label>
+                  </div>
+                  <div class="swatch-row">
+                    <span class="control-label">土曜日 (Saturday)</span>
+                    <label class="color-picker-circle"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg></span><input id="cal-satColor" type="color" value="#448aff"></label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card" style="margin-top:12px;">
+                <div class="card-title">
+                  <span>上部ロゴ設定</span>
+                  <span id="cal-logoSourceBadge" class="chip-sub">内蔵Tcロゴ</span>
+                </div>
+                <label class="toggle-row">
+                  <span>上部ロゴ (@Tsukaccha) を表示</span>
+                  <input id="cal-showLogo" type="checkbox" class="toggle-switch" checked>
+                </label>
+                <div class="control-row">
+                  <button id="cal-uploadLogoBtn" type="button" class="btn btn-secondary btn-sm" style="flex:1;">カスタムロゴ画像を読込</button>
+                  <button id="cal-resetLogoBtn" type="button" class="btn btn-secondary btn-sm">標準に戻す</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==============================================================
+             MODE 5: RISO (リソグラフ)
+             ============================================================== -->
+        <section id="panel-riso" class="mode-panel" hidden>
+          <div class="panel-header">
+            <span class="panel-header-title">リソグラフ印刷スタジオ</span>
+            <div style="display:flex; gap:6px;">
+              <button id="riso-invertBtn" type="button" class="btn btn-secondary btn-sm" title="インク順序を反転">反転</button>
+              <button id="riso-randomBtn" type="button" class="btn btn-secondary btn-sm">ランダム</button>
+              <button id="riso-presetsBtn" type="button" class="btn btn-primary btn-sm">プリセット</button>
+            </div>
+          </div>
+
+          <div class="panel-scroll">
+            <!-- Ink Layers & Swatches -->
+            <div class="card">
+              <div class="card-title"><span>インク版（最大3色）</span></div>
+              <div id="riso-inkTabs" class="riso-ink-tabs no-scrollbar"></div>
+              <div id="riso-swatches" class="riso-swatches"></div>
+            </div>
+
+            <!-- Screen Style & Paper Stock -->
+            <div class="card">
+              <div class="card-title"><span>網点スタイル</span></div>
+              <div id="riso-styles" class="ratio-grid-2">
+                <button type="button" class="chip-btn active" data-riso-style="0">ROSETTE</button>
+                <button type="button" class="chip-btn" data-riso-style="1">HALFTONE</button>
+                <button type="button" class="chip-btn" data-riso-style="2">GRAIN</button>
+                <button type="button" class="chip-btn" data-riso-style="3">HATCH</button>
+              </div>
+              <hr class="divider">
+              <div class="card-title"><span>用紙ストック</span></div>
+              <div id="riso-papers" class="ratio-grid-2"></div>
+            </div>
+
+            <!-- Texture / Tone / Frame Sliders -->
+            <div class="card">
+              <div class="card-title"><span>粒子・版ズレ・階調</span></div>
+              <div class="control-group">
+                <div class="control-row">
+                  <span class="control-label">ドット / 粒子サイズ</span>
+                  <span id="riso-dotSizeVal" class="value-pill">5.5px</span>
+                </div>
+                <input id="riso-dotSize" type="range" min="2" max="16" step="0.5" value="5.5">
+              </div>
+              <div class="control-group">
+                <div class="control-row">
+                  <span class="control-label">紙繊維テクスチャ</span>
+                  <span id="riso-textureVal" class="value-pill">48%</span>
+                </div>
+                <input id="riso-texture" type="range" min="0" max="100" step="1" value="48">
+              </div>
+              <div class="control-group">
+                <div class="control-row">
+                  <span class="control-label">版ズレ (Ink Shift)</span>
+                  <span id="riso-shiftVal" class="value-pill">4px</span>
+                </div>
+                <input id="riso-shift" type="range" min="0" max="28" step="1" value="4">
+              </div>
+              <div class="control-group">
+                <div class="control-row">
+                  <span class="control-label">コントラスト</span>
+                  <span id="riso-contrastVal" class="value-pill">115%</span>
+                </div>
+                <input id="riso-contrast" type="range" min="50" max="190" step="1" value="115">
+              </div>
+              <div class="control-group">
+                <div class="control-row">
+                  <span class="control-label">明るさ</span>
+                  <span id="riso-brightnessVal" class="value-pill">0</span>
+                </div>
+                <input id="riso-brightness" type="range" min="-50" max="50" step="1" value="0">
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title"><span>余白・角丸</span></div>
+              <div class="ratio-grid-2">
+                <button type="button" class="chip-btn active" data-riso-margin="0">NONE (0%)</button>
+                <button type="button" class="chip-btn" data-riso-margin="8">NARROW (8%)</button>
+                <button type="button" class="chip-btn" data-riso-margin="14">MEDIUM (14%)</button>
+                <button type="button" class="chip-btn" data-riso-margin="20">WIDE (20%)</button>
+              </div>
+              <div class="control-group">
+                <div class="control-row">
+                  <span class="control-label">余白サイズ</span>
+                  <span id="riso-marginVal" class="value-pill">0%</span>
+                </div>
+                <input id="riso-margin" type="range" min="0" max="25" step="1" value="0">
+              </div>
+              <div class="control-group">
+                <div class="control-row">
+                  <span class="control-label">角丸</span>
+                  <span id="riso-radiusVal" class="value-pill">18px</span>
+                </div>
+                <input id="riso-radius" type="range" min="0" max="60" step="2" value="18">
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </aside>
+    </div>
+  </div>
+
+  <!-- ==================================================================
+       Unified Export Modal
+       ================================================================== -->
+  <div id="exportModal" class="modal-backdrop" hidden>
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>画像の書き出し・保存</h3>
+        <button id="closeExportModalBtn" type="button" class="btn btn-ghost btn-sm">✕</button>
+      </div>
+
+      <!-- Progress View -->
+      <div id="exportProgressArea" class="control-group" hidden>
+        <div class="control-row">
+          <span id="exportProgressText" class="control-label">高画質レンダリング中...</span>
+          <span id="exportProgressCount" class="value-pill">0%</span>
+        </div>
+        <div class="progress-track">
+          <div id="exportProgressBar" class="progress-fill"></div>
+        </div>
+      </div>
+
+      <!-- Options View -->
+      <div id="exportActionsArea" style="display:flex; flex-direction:column; gap:12px;">
+        <p id="exportSummaryText" class="hint-text"></p>
+
+        <!-- Riso-specific Resolution & Format Selector -->
+        <div id="risoExportOpts" style="display:flex; flex-direction:column; gap:10px;" hidden>
+          <div class="card-title"><span>出力解像度 (Megapixels)</span></div>
+          <div id="risoMpGrid" class="ratio-grid-3"></div>
+          <div class="card-title"><span>ファイル形式</span></div>
+          <div class="ratio-grid-2">
+            <button type="button" class="chip-btn active" data-riso-fmt="jpeg">JPEG (95%・軽量)</button>
+            <button type="button" class="chip-btn" data-riso-fmt="png">PNG (無劣化)</button>
+          </div>
+        </div>
+
+        <button id="shareExportBtn" type="button" class="btn btn-primary btn-full">
+          スマホの写真フォルダに保存 / 共有
+        </button>
+        <button id="downloadExportBtn" type="button" class="btn btn-secondary btn-full">
+          端末に直接ダウンロード
+        </button>
+        <button id="zipExportBtn" type="button" class="btn btn-secondary btn-full">
+          ZIPファイルにまとめて一括保存
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================================================================
+       Riso Preset Gallery Modal
+       ================================================================== -->
+  <div id="risoPresetModal" class="modal-backdrop" hidden>
+    <div class="modal-box modal-wide">
+      <div class="modal-head">
+        <h3>リソグラフ プリセット</h3>
+        <div style="display:flex; gap:8px;">
+          <button id="saveRisoPresetBtn" type="button" class="btn btn-primary btn-sm">★ 現在の設定を保存</button>
+          <button id="closeRisoPresetBtn" type="button" class="btn btn-secondary btn-sm">閉じる</button>
+        </div>
+      </div>
+      <div id="risoPresetGrid" class="preset-grid"></div>
+    </div>
+  </div>
+
+  <!-- ==================================================================
+       App Settings & PWA Utility Modal
+       ================================================================== -->
+  <div id="settingsModal" class="modal-backdrop" hidden>
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>スタジオ設定・PWAツール</h3>
+        <button id="closeSettingsBtn" type="button" class="btn btn-ghost btn-sm">✕</button>
+      </div>
+      <div class="card">
+        <div class="card-title"><span>PNGアプリアイコン書き出し</span></div>
+        <p class="hint-text">ホーム画面用やiOS向けに高解像度PNGアイコンを書き出せます。</p>
+        <div class="ratio-grid-2">
+          <button id="dlIcon192Btn" type="button" class="btn btn-secondary btn-sm">192×192 PNG</button>
+          <button id="dlIcon512Btn" type="button" class="btn btn-secondary btn-sm">512×512 PNG</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title"><span>パフォーマンス最適化情報</span></div>
+        <p class="hint-text">
+          ・プレビューは全モード共通プロキシ（最大1200px）で高速描画<br>
+          ・書き出し時のみ元解像度 / 24MP フルレンダリングを実行<br>
+          ・フレーム / クロップ / コラージュ / カレンダー / リソグラフ完全統合
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
