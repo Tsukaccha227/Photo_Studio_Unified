@@ -1,4 +1,4 @@
-const CACHE_NAME = 'photo-studio-unified-v1';
+const CACHE_NAME = 'photo-studio-unified-v2';
 const CORE_ASSETS = [
   './',
   './index.html',

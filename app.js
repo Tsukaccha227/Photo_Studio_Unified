@@ -93,6 +93,8 @@
       extractedIndex: 0,
       autoPerPhoto: true,
       borderPercent: 8,
+      canvasRatio: 'original',
+      photoRatio: 'original',
       sizingRule: 'equal-margin',
       blurAmount: 35,
       blurBrightness: 100,
@@ -624,35 +626,86 @@
   }
 
   // --- Mode 1: FRAME Renderer ---
-  function renderFrame(targetCanvas, photoObj, maxPreviewDim = null) {
+  function renderFrame(targetCanvas, photoObj, maxPreviewDim = null, showGrid = false) {
     const isPreview = Boolean(maxPreviewDim);
     const src = (isPreview && photoObj.proxy) ? photoObj.proxy : photoObj.img;
     const origW = photoObj.width;
     const origH = photoObj.height;
-
-    let scale = 1;
-    if (isPreview) {
-      const maxSide = Math.max(origW, origH);
-      if (maxSide > maxPreviewDim) scale = maxPreviewDim / maxSide;
-    }
-
-    const innerW = Math.round(origW * scale);
-    const innerH = Math.round(origH * scale);
-    const minSide = Math.min(innerW, innerH);
     const f = state.frame;
     const ratio = f.borderPercent / 100;
 
-    let padX, padY;
-    if (f.sizingRule === 'equal-margin') {
-      const p = Math.round(minSide * ratio);
-      padX = p; padY = p;
+    // 1. Native cropped dimensions for inner photo
+    const origAspect = origW / Math.max(1, origH);
+    const innerAspect = parseAspectRatio(f.photoRatio, origW, origH);
+    const baseInnerW = Math.round(origAspect > innerAspect ? origH * innerAspect : origW);
+    const baseInnerH = Math.round(origAspect > innerAspect ? origH : origW / innerAspect);
+
+    // 2. Full-resolution output dimensions & inner photo placement
+    let fullTotalW, fullTotalH, fullInnerW, fullInnerH;
+    if (f.canvasRatio === 'original') {
+      const outPadX = f.sizingRule === 'equal-margin'
+        ? Math.round(Math.min(baseInnerW, baseInnerH) * ratio)
+        : Math.round(baseInnerW * ratio);
+      const outPadY = f.sizingRule === 'equal-margin'
+        ? outPadX
+        : Math.round(baseInnerH * ratio);
+      fullTotalW = baseInnerW + outPadX * 2;
+      fullTotalH = baseInnerH + outPadY * 2;
+      fullInnerW = baseInnerW;
+      fullInnerH = baseInnerH;
     } else {
-      padX = Math.round(innerW * ratio);
-      padY = Math.round(innerH * ratio);
+      const outerAspect = parseAspectRatio(f.canvasRatio, baseInnerW, baseInnerH);
+      const unitShort = Math.min(outerAspect, 1);
+      const unitPad = unitShort * ratio;
+      const unitAvailW = Math.max(0.05, outerAspect - unitPad * 2);
+      const unitAvailH = Math.max(0.05, 1 - unitPad * 2);
+      let unitPhotoW = unitAvailW;
+      let unitPhotoH = unitPhotoW / innerAspect;
+      if (unitPhotoH > unitAvailH) {
+        unitPhotoH = unitAvailH;
+        unitPhotoW = unitPhotoH * innerAspect;
+      }
+
+      const rawH = baseInnerH / Math.max(0.01, unitPhotoH);
+      const rawW = outerAspect * rawH;
+      if (rawW * rawH > TARGET_24MP) {
+        const capped = calcDimensionsForMP(24, outerAspect);
+        fullTotalW = capped.w;
+        fullTotalH = capped.h;
+      } else {
+        fullTotalW = Math.round(rawW);
+        fullTotalH = Math.round(rawH);
+      }
+
+      const fullShort = Math.min(fullTotalW, fullTotalH);
+      const fullMinPad = fullShort * ratio;
+      const fullAvailW = Math.max(10, fullTotalW - fullMinPad * 2);
+      const fullAvailH = Math.max(10, fullTotalH - fullMinPad * 2);
+      let fitW = fullAvailW;
+      let fitH = fitW / innerAspect;
+      if (fitH > fullAvailH) {
+        fitH = fullAvailH;
+        fitW = fitH * innerAspect;
+      }
+      fullInnerW = Math.round(fitW);
+      fullInnerH = Math.round(fitH);
     }
 
-    const totalW = innerW + padX * 2;
-    const totalH = innerH + padY * 2;
+    // 3. Preview vs Export scaling
+    let scale = 1;
+    if (isPreview) {
+      const maxSide = Math.max(fullTotalW, fullTotalH);
+      if (maxSide > maxPreviewDim) scale = maxPreviewDim / maxSide;
+    }
+
+    const totalW = Math.max(10, Math.round(fullTotalW * scale));
+    const totalH = Math.max(10, Math.round(fullTotalH * scale));
+    const innerW = Math.max(4, Math.round(fullInnerW * scale));
+    const innerH = Math.max(4, Math.round(fullInnerH * scale));
+    const padX = Math.round((totalW - innerW) / 2);
+    const padY = Math.round((totalH - innerH) / 2);
+    const minInnerSide = Math.min(innerW, innerH);
+
     if (targetCanvas.width !== totalW) targetCanvas.width = totalW;
     if (targetCanvas.height !== totalH) targetCanvas.height = totalH;
 
@@ -661,6 +714,7 @@
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = isPreview ? 'medium' : 'high';
 
+    // 4. Outer Frame Background
     if (f.fillMode === 'blur') {
       const blurPx = Math.max(2, Math.round((f.blurAmount / 1000) * Math.max(totalW, totalH)));
       const exp = blurPx * 3;
@@ -668,7 +722,10 @@
       ctx.fillRect(0, 0, totalW, totalH);
       ctx.save();
       ctx.filter = `blur(${blurPx}px) brightness(${f.blurBrightness}%) saturate(115%)`;
-      ctx.drawImage(src, -exp, -exp, totalW + exp * 2, totalH + exp * 2);
+      drawCalCroppedPhoto(ctx, src, {
+        x: -exp, y: -exp,
+        w: totalW + exp * 2, h: totalH + exp * 2
+      }, totalW / Math.max(1, totalH), 0, 0);
       ctx.restore();
     } else {
       let fillColor = f.solidColor;
@@ -680,11 +737,12 @@
       ctx.fillRect(0, 0, totalW, totalH);
     }
 
-    const radiusPx = Math.round((f.cornerRadius / 100) * (minSide / 2));
+    // 5. Shadow & Inner Cropped Photo
+    const radiusPx = Math.round((f.cornerRadius / 100) * (minInnerSide / 2));
 
-    if (f.shadowStrength > 0 && f.borderPercent > 0) {
+    if (f.shadowStrength > 0 && (padX > 0 || padY > 0)) {
       ctx.save();
-      const sBlur = Math.round((f.shadowStrength / 100) * (minSide * 0.08));
+      const sBlur = Math.round((f.shadowStrength / 100) * (minInnerSide * 0.08));
       ctx.shadowColor = `rgba(0, 0, 0, ${(f.shadowStrength / 100) * 0.55})`;
       ctx.shadowBlur = sBlur;
       ctx.shadowOffsetX = 0;
@@ -695,18 +753,28 @@
       ctx.restore();
     }
 
+    const fc = photoObj.frameCrop || { offsetX: 0, offsetY: 0 };
     ctx.save();
     if (radiusPx > 0) {
       drawRoundedRectPath(ctx, padX, padY, innerW, innerH, radiusPx);
       ctx.clip();
     }
-    ctx.drawImage(src, padX, padY, innerW, innerH);
+    drawCalCroppedPhoto(ctx, src, { x: padX, y: padY, w: innerW, h: innerH }, innerAspect, fc.offsetX, fc.offsetY);
+
+    if (showGrid && f.photoRatio !== 'original') {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padX + innerW / 3, padY); ctx.lineTo(padX + innerW / 3, padY + innerH);
+      ctx.moveTo(padX + (innerW * 2) / 3, padY); ctx.lineTo(padX + (innerW * 2) / 3, padY + innerH);
+      ctx.moveTo(padX, padY + innerH / 3); ctx.lineTo(padX + innerW, padY + innerH / 3);
+      ctx.moveTo(padX, padY + (innerH * 2) / 3); ctx.lineTo(padX + innerW, padY + (innerH * 2) / 3);
+      ctx.stroke();
+    }
     ctx.restore();
     ctx.restore();
 
-    const outPadX = f.sizingRule === 'equal-margin' ? Math.round(Math.min(origW, origH) * ratio) : Math.round(origW * ratio);
-    const outPadY = f.sizingRule === 'equal-margin' ? outPadX : Math.round(origH * ratio);
-    return { totalW: origW + outPadX * 2, totalH: origH + outPadY * 2 };
+    return { totalW: fullTotalW, totalH: fullTotalH };
   }
 
   // --- Mode 2: CROP Renderer ---
@@ -1492,8 +1560,12 @@
     );
 
     if (state.mode === 'frame') {
-      const info = renderFrame(dom.previewCanvas, photo, maxDim);
-      dom.infoResolution.textContent = `出力: ${info.totalW} × ${info.totalH}px`;
+      const info = renderFrame(dom.previewCanvas, photo, maxDim, showOverlay);
+      const f = state.frame;
+      const ratioTag = (f.canvasRatio !== 'original' || f.photoRatio !== 'original')
+        ? ` (枠:${f.canvasRatio === 'original' ? '元' : f.canvasRatio} / 写真:${f.photoRatio === 'original' ? '元' : f.photoRatio})`
+        : '';
+      dom.infoResolution.textContent = `出力: ${info.totalW} × ${info.totalH}px${ratioTag}`;
       dom.infoIndex.textContent = `${state.currentIndex + 1} / ${state.photos.length}枚`;
     } else if (state.mode === 'crop') {
       const info = renderCrop(dom.previewCanvas, photo, maxDim, showOverlay);
@@ -1534,13 +1606,16 @@
 
   function updateDragHint() {
     const hasPhotos = state.photos.length > 0;
-    const isInteractive = state.mode === 'crop' || state.mode === 'collage';
+    const frameCanDrag = state.mode === 'frame' && state.frame.photoRatio !== 'original';
+    const isInteractive = state.mode === 'crop' || state.mode === 'collage' || frameCanDrag;
     dom.previewCanvas.classList.toggle('interactive-canvas', isInteractive && hasPhotos);
     dom.dragHintBadge.hidden = !(isInteractive && hasPhotos);
     if (state.mode === 'crop') {
       dom.dragHintText.textContent = 'ドラッグで切り抜き位置を調整';
     } else if (state.mode === 'collage') {
       dom.dragHintText.textContent = 'ドラッグで位置移動 / 長押しで枠を入替';
+    } else if (frameCanDrag) {
+      dom.dragHintText.textContent = 'ドラッグで中の写真位置を調整';
     }
   }
 
@@ -1564,6 +1639,13 @@
     $('crop-panXVal').textContent = `${Math.round(photo.crop.panX * 100)}%`;
     $('crop-panY').value = Math.round(photo.crop.panY * 100);
     $('crop-panYVal').textContent = `${Math.round(photo.crop.panY * 100)}%`;
+
+    // Frame inner crop offset sliders
+    const fc = photo.frameCrop || (photo.frameCrop = { offsetX: 0, offsetY: 0 });
+    $('frame-offsetX').value = Math.round(fc.offsetX);
+    $('frame-offsetXVal').textContent = `${Math.round(fc.offsetX)}%`;
+    $('frame-offsetY').value = Math.round(fc.offsetY);
+    $('frame-offsetYVal').textContent = `${Math.round(fc.offsetY)}%`;
 
     // Frame extracted palette
     renderFramePalette();
@@ -1680,7 +1762,8 @@
           exifDate: new Date(exifRes.date),
           exifSource: exifRes.source,
           selectedDate: new Date(exifRes.date),
-          crop: { panX: 0, panY: 0, zoom: 1 }
+          crop: { panX: 0, panY: 0, zoom: 1 },
+          frameCrop: { offsetX: 0, offsetY: 0 }
         });
       } catch (err) {
         console.error('Image load error:', err);
@@ -1869,6 +1952,50 @@
       schedulePreviewRender();
     });
 
+    const updateFrameRatioVisibility = () => {
+      $('frame-ruleCard').hidden = state.frame.canvasRatio !== 'original';
+      $('frame-offsetBox').hidden = state.frame.photoRatio === 'original';
+      updateDragHint();
+    };
+
+    const bindFrameRatios = (containerId, setter) => {
+      const btns = $(containerId).querySelectorAll('[data-ratio]');
+      btns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          btns.forEach(b => b.classList.toggle('active', b === btn));
+          setter(btn.dataset.ratio);
+          updateFrameRatioVisibility();
+          schedulePreviewRender();
+        });
+      });
+    };
+    bindFrameRatios('frame-canvasRatios', (r) => { state.frame.canvasRatio = r; });
+    bindFrameRatios('frame-photoRatios', (r) => { state.frame.photoRatio = r; });
+
+    $('frame-offsetX').addEventListener('input', (e) => {
+      const p = getCurrentPhoto();
+      if (!p) return;
+      p.frameCrop.offsetX = parseInt(e.target.value, 10);
+      $('frame-offsetXVal').textContent = `${p.frameCrop.offsetX}%`;
+      schedulePreviewRender(true);
+    });
+
+    $('frame-offsetY').addEventListener('input', (e) => {
+      const p = getCurrentPhoto();
+      if (!p) return;
+      p.frameCrop.offsetY = parseInt(e.target.value, 10);
+      $('frame-offsetYVal').textContent = `${p.frameCrop.offsetY}%`;
+      schedulePreviewRender(true);
+    });
+
+    $('frame-resetCrop').addEventListener('click', () => {
+      const p = getCurrentPhoto();
+      if (!p) return;
+      p.frameCrop = { offsetX: 0, offsetY: 0 };
+      syncPhotoContextUI();
+      schedulePreviewRender();
+    });
+
     document.querySelectorAll('[data-frame-rule]').forEach(btn => {
       btn.addEventListener('click', () => {
         state.frame.sizingRule = btn.dataset.frameRule;
@@ -1878,6 +2005,8 @@
         schedulePreviewRender();
       });
     });
+
+    updateFrameRatioVisibility();
 
     $('frame-radius').addEventListener('input', (e) => {
       state.frame.cornerRadius = parseFloat(e.target.value);
@@ -2583,7 +2712,8 @@
 
     dom.previewCanvas.addEventListener('pointerdown', (e) => {
       if (!state.photos.length) return;
-      if (state.mode !== 'crop' && state.mode !== 'collage') return;
+      const isFrameCrop = state.mode === 'frame' && state.frame.photoRatio !== 'original';
+      if (state.mode !== 'crop' && state.mode !== 'collage' && !isFrameCrop) return;
 
       const { x, y } = toCanvasCoords(e.clientX, e.clientY);
       clearLongPress();
@@ -2609,6 +2739,10 @@
         const slot = state.collage.slots[state.collage.activeCellIdx];
         startPanX = slot ? slot.panX : 0;
         startPanY = slot ? slot.panY : 0;
+      } else if (isFrameCrop) {
+        const p = getCurrentPhoto();
+        startPanX = p.frameCrop.offsetX;
+        startPanY = p.frameCrop.offsetY;
       } else {
         const p = getCurrentPhoto();
         startPanX = p.crop.panX;
@@ -2648,6 +2782,12 @@
         const p = getCurrentPhoto();
         p.crop.panX = Math.max(-1, Math.min(1, startPanX + dx));
         p.crop.panY = Math.max(-1, Math.min(1, startPanY + dy));
+        syncPhotoContextUI();
+        schedulePreviewRender(true);
+      } else if (state.mode === 'frame' && state.frame.photoRatio !== 'original') {
+        const p = getCurrentPhoto();
+        p.frameCrop.offsetX = Math.max(-100, Math.min(100, Math.round(startPanX - dx * 100)));
+        p.frameCrop.offsetY = Math.max(-100, Math.min(100, Math.round(startPanY - dy * 100)));
         syncPhotoContextUI();
         schedulePreviewRender(true);
       } else if (state.mode === 'collage') {

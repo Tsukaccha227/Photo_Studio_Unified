@@ -243,14 +243,65 @@
             <!-- Subtab: Size / Radius / Shadow -->
             <div id="frame-size" class="subtab-content" hidden>
               <div class="card">
-                <div class="card-title"><span>比率と距離のルール</span></div>
+                <div class="card-title"><span>外枠（フレーム全体）の比率</span></div>
+                <div id="frame-canvasRatios" class="ratio-grid-5">
+                  <button type="button" class="chip-btn active" data-ratio="original">元比率</button>
+                  <button type="button" class="chip-btn" data-ratio="3:2">3:2</button>
+                  <button type="button" class="chip-btn" data-ratio="4:3">4:3</button>
+                  <button type="button" class="chip-btn" data-ratio="16:9">16:9</button>
+                  <button type="button" class="chip-btn" data-ratio="1:1">1:1</button>
+                  <button type="button" class="chip-btn" data-ratio="4:5">4:5</button>
+                  <button type="button" class="chip-btn" data-ratio="2:3">2:3</button>
+                  <button type="button" class="chip-btn" data-ratio="3:4">3:4</button>
+                  <button type="button" class="chip-btn" data-ratio="9:16">9:16</button>
+                  <button type="button" class="chip-btn" data-ratio="21:9">21:9</button>
+                </div>
+              </div>
+
+              <div class="card" style="margin-top:12px;">
+                <div class="card-title">
+                  <span>中の写真の比率（クロップ）</span>
+                  <button id="frame-resetCrop" type="button" class="btn-link">中央に戻す</button>
+                </div>
+                <div id="frame-photoRatios" class="ratio-grid-5">
+                  <button type="button" class="chip-btn active" data-ratio="original">元比率</button>
+                  <button type="button" class="chip-btn" data-ratio="3:2">3:2</button>
+                  <button type="button" class="chip-btn" data-ratio="4:3">4:3</button>
+                  <button type="button" class="chip-btn" data-ratio="16:9">16:9</button>
+                  <button type="button" class="chip-btn" data-ratio="1:1">1:1</button>
+                  <button type="button" class="chip-btn" data-ratio="4:5">4:5</button>
+                  <button type="button" class="chip-btn" data-ratio="2:3">2:3</button>
+                  <button type="button" class="chip-btn" data-ratio="3:4">3:4</button>
+                  <button type="button" class="chip-btn" data-ratio="9:16">9:16</button>
+                  <button type="button" class="chip-btn" data-ratio="21:9">21:9</button>
+                </div>
+                <div id="frame-offsetBox" class="dual-grid" hidden>
+                  <div class="control-group">
+                    <div class="control-row">
+                      <span class="control-label">位置 X</span>
+                      <span id="frame-offsetXVal" class="value-pill">0%</span>
+                    </div>
+                    <input id="frame-offsetX" type="range" min="-100" max="100" value="0">
+                  </div>
+                  <div class="control-group">
+                    <div class="control-row">
+                      <span class="control-label">位置 Y</span>
+                      <span id="frame-offsetYVal" class="value-pill">0%</span>
+                    </div>
+                    <input id="frame-offsetY" type="range" min="-100" max="100" value="0">
+                  </div>
+                </div>
+              </div>
+
+              <div id="frame-ruleCard" class="card" style="margin-top:12px;">
+                <div class="card-title"><span>余白の距離ルール（外枠：元比率時）</span></div>
                 <button type="button" class="option-card-btn active" data-frame-rule="equal-margin">
                   <strong>上下左右が完全等幅</strong>
                   <span>4辺すべて全く同じピクセル距離でフチを追加</span>
                 </button>
                 <button type="button" class="option-card-btn" data-frame-rule="exact-aspect">
                   <strong>外枠も同アスペクト比</strong>
-                  <span>完成画像の縦横比も元写真と100%同一に保つ</span>
+                  <span>完成画像の縦横比も中の写真と100%同一に保つ</span>
                 </button>
               </div>
 
